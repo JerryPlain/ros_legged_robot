@@ -1,0 +1,40 @@
+Tutorial 1：
+Question 1 (from Exercise 1, page 3)
+
+Q：Are all the frames in Figure 1 correct? If not, which ones are not and why?
+Not all frames in Figure 1 are correct.
+Some corner frames do not satisfy the right-hand rule. In a valid right-handed coordinate system, the z-axis must be the cross product of the x- and y-axes (z = x × y). However, in Figure 1, several frames appear to have inconsistent orientations.
+For example, if a corner's x-axis points to the right and its y-axis points upward, the z-axis should come out of the plane. But in some frames, the z-axis points in the wrong direction, violating the right-hand convention.
+Therefore, those frames must be corrected to maintain consistent right-handed coordinate systems.
+
+Question 2 (from Exercise 2, page 5)
+
+Q: When you make the cage spin, which component of the transformed twist stays constant? Why not the other?
+The angular component (rotational velocity) of the transformed twist stays constant, while the linear component (translational velocity) does not.
+This is because angular velocity is purely related to the rotation axis and remains invariant regardless of the reference point. However, linear velocity depends on the position of the reference frame.
+As the cage spins and the frame moves in space, the relative linear velocity changes due to the new offset from the center. Therefore, only the angular part remains constant when transforming the twist during rotation.
+
+
+Question 3 (from Exercise 3, page 6)
+
+Q: When you make the cage spin, which component of the transformed wrench stays constant? Why not the other?
+The torque (angular part) of the transformed wrench remains constant, while the force (linear part) does not.
+This is because torque is invariant under translation—it only depends on the rotation axis and magnitude. In contrast, the force is affected by the position of the reference frame due to the cross product with the offset vector:
+f_transformed = f_original + r × τ
+As the cage spins, the reference point (corner) rotates around the center, and the linear force expression changes accordingly. Thus, only the torque remains unchanged when the frame moves.
+
+Question 4 (Recommended / Optional)
+
+Q: How do you verify that your wrench transformation is implemented correctly?
+verify the wrench transformation in two ways:
+1. By using the built-in Pinocchio function T.actInv(F), which applies the correct adjoint inverse transformation.
+2. By manually computing the transformation using the transpose of the adjoint matrix: Ad_T^T ⋅ F.
+compare the results from both methods. If the Euclidean norm of their difference is close to zero (e.g., < 1e-10), I can conclude that the implementation is correct.
+
+
+
+Tutorial 2:
+Q: Is t2_temp.py a ROS node? Why?
+A: No, t2_temp.py is not a ROS 2 node. 
+It does not initialize or use rclpy and does not define a ROS Node object. 
+It is a standalone Python script that interacts with PyBullet and Pinocchio, not with the ROS communication system (topics, services, etc.).

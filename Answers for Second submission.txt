@@ -1,0 +1,23 @@
+Questions in Tutorial 5:
+4. Which ones of the ground reference points can exist outside the supporting polygon?
+Answer: 
+Supporting polygen is the region where the foot of robot touches the ground. 
+In still motion, ZMP, CMP, DCM are normally in the polygen.
+However, in the dynamic motion, CMP, ZMP, DCM may be outside. 
+if the robot is losing the balance, the zmp will be outside.
+when robot is adjusting the balance, cmp may be outside.
+when robot is disturbed or in dynamic motion, dcm is normally outside to be used to predict the future position of Center of Mass.
+
+5. Which modality holds higher pushing forces, torque or position hardware interface?
+Answer:
+Obviously, position control.
+Because in torque control, it directly control the torque output of joint, which has high demand for hardwar (precise torque sensor), so it is sensitive to the disturbance, robot will lose balance easily because of the high F_push.
+However, in Position control. Based on the calculated joint position and velocity, the hardware just need to follow the reference position. It is more robust, which can handle the disturbance better.
+
+
+6. Are the torque and position control modalities equivalent with the proposed method? if not, why?
+Answer:
+Nope, they are not equivalent.
+- Position control is more robust to the disturbance. Torque control has more demand for the hardware, which is more sensitive to the disturbance.
+- Position control is more easy to achieve because it is based on the integration. But torque control needs precise torque sensor.
+- Position control is more suitable for the tasks that need high stability and high anti-disturbance ability. Torque control is more suitable for the tasks that need high-precision torque feedback.
