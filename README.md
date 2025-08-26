@@ -75,8 +75,7 @@ colcon build
 source install/setup.bash
 ros2 run ros_visuals one_leg_stand
 
-EX3 and EX4:
-# the simulation time is about 15s, after that you can (or you already can) find the graph （T4_com_comparison_plot.png） in /workspaces/ros_ws/src/ros_visuals/ros_visuals/images
+EX3 and EX4: the simulation time is about 15s, after that you can (or you already can) find the graph （T4_com_comparison_plot.png） in /workspaces/ros_ws/src/ros_visuals/ros_visuals/images
 colcon build
 source install/setup.bash
 ros2 run ros_visuals squating
@@ -87,13 +86,12 @@ colcon build
 source install/setup.bash
 ros2 run ros_visuals t51
 
-EX3:
-# Before beginning, please Change the f_push_mag in line 220 of t51.py from 10N to 18N for better understanding
+EX3: Before beginning, please Change the f_push_mag in line 220 of t51.py from 10N to 18N for better understanding
 colcon build
 source install/setup.bash
 ros2 run ros_visuals t51
 
-# you can do the following change in t51 for 4 different situations of balance control:
+you can do the following change in t51 for 4 different situations of balance control:
     while rclpy.ok(): # Main loop
         ############################
         # Detmine control strategies
@@ -105,10 +103,10 @@ ros2 run ros_visuals t51
 2. when only ankle_strategy is true, it will stand but hard
 3. when only hip_strategy is true, it will stand but still hard
 4. when we use both strategy, it will stand easier.
-# see the graphs in src/ros_visuals/ros_visuals/images
 
-EX4：
-# I have changed the F_push_mag to 40N
+see the graphs in src/ros_visuals/ros_visuals/images
+
+EX4：I have changed the F_push_mag to 40N
 colcon build
 source install/setup.bash
 ros2 run ros_visuals t52
@@ -119,7 +117,8 @@ ros2 run ros_visuals t52
         ############################
         use_ankle_strategy = False  # YOU CAN CHANGE IT TO "True" HERE
         use_hip_strategy = False
-# see the graphs in src/ros_visuals/ros_visuals/images
+
+see the graphs in src/ros_visuals/ros_visuals/images
 
 
 ################################################################################
