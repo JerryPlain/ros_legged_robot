@@ -1,11 +1,10 @@
-from pydrake.all import MathematicalProgram, Solve # 导入 Drake 中的优化器对象和求解器
+from pydrake.all import MathematicalProgram, Solve # import necessary modules from pydrake
 
 """
 Example 1
 
-Pydrake is a framework that is spezialized in solving and simulating 
-optimization problems we will use it to solve the trajectory planning problem
-form the lecture.
+Pydrake is a framework that is specialized in solving and simulating
+optimization problems we will use it to solve the trajectory planning problem from the lecture.
 
 This is the most basic example of how to solve a MathematicalProblem
 Many more examples can be found in the drake tutorials section:
@@ -20,8 +19,8 @@ Problem: find the smallest number that is bigger than 3.
 # 1. Define an instance of MathematicalProgram 
 prog = MathematicalProgram() 
 
-# 2. Add decision varaibles
-x = prog.NewContinuousVariables(1) 
+# 2. Add decision variables
+x = prog.NewContinuousVariables(1)  # define one decision variable, e.g. x[0]
 
 # 3. Add Cost function 
 prog.AddCost(x.dot(x))
@@ -30,7 +29,7 @@ prog.AddCost(x.dot(x))
 prog.AddConstraint(x[0] >= 3)
 
 # 5. Solve the problem 
-result = Solve(prog)  # 调用求解器（内部使用 QP 或 NLP 解算器）
+result = Solve(prog)  # Call the solver (internally uses QP or NLP solvers)
 
 # 6. Get the solution
 if (result.is_success):

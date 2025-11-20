@@ -1,3 +1,9 @@
+"""
+TF transformations functions
+R -> quaternion, Euler -> quaternion
+e.g. usage:
+q = tf_transformations.quaternion_from_euler(roll, pitch, yaw)
+"""
 import math
 import numpy as np
 
@@ -24,7 +30,8 @@ def quaternion_from_euler(roll, pitch, yaw):
 
 
 def quaternion_from_matrix(matrix):
-    """Return quaternion from rotation matrix.
+    """
+    Return quaternion from rotation matrix.
     Args:
         matrix: 4x4 or 3x3 rotation matrix
     Returns:
