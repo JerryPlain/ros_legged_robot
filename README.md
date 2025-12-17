@@ -1,4 +1,4 @@
-# Guidelines of how to run the scripts from different Tasks
+# Guidelines
 
 ## Delivery 1
 
@@ -96,7 +96,8 @@ source install/setup.bash
 ros2 run ros_visuals one_leg_stand
 ```
 
-EX3 and EX4: the simulation time is about 15s, after that you can (or you already can) find the graph （T4_com_comparison_plot.png） in /workspaces/ros_ws/src/```bash
+EX3 and EX4: the simulation time is about 15s, after that you can (or you already can) find the graph （T4_com_comparison_plot.png） in /workspaces/ros_ws/src/
+
 ```bash
 ros_visuals/ros_visuals/images
 colcon build
@@ -121,12 +122,14 @@ ros2 run ros_visuals t51
 ```
 
 you can do the following change in t51 for 4 different situations of balance control:
+```bash
     while rclpy.ok(): # Main loop
         ############################
         # Detmine control strategies
         ############################
         use_ankle_strategy = False  # YOU CAN CHANGE IT TO "True" HERE
         use_hip_strategy = False
+```
 
 1. when the ankle_strategy and hip_strategy are False, the robot will fall
 2. when only ankle_strategy is true, it will stand but hard
@@ -141,12 +144,15 @@ colcon build
 source install/setup.bash
 ros2 run ros_visuals t52
 ```
+
+```bash
     while rclpy.ok(): # Main loop
         ############################
         # Detmine control strategies
         ############################
         use_ankle_strategy = False  # YOU CAN CHANGE IT TO "True" HERE
         use_hip_strategy = False
+```
 
 see the graphs in src/ros_visuals/ros_visuals/images
 
