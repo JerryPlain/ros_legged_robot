@@ -2,6 +2,7 @@
 ## T1
 ### SE(3) & TF:
 用 pinocchio.SE3 表示立方体几何结构，用 twist + exp6 在 SE(3) 上积分中心位姿，并通过 ROS2 tf2 广播完整的 TF 树
+
 1. Node的生命周期：节点入口
 ```bash
 class T11Node(Node): # create a NOS2 node named t11_node
@@ -27,15 +28,24 @@ offsets = [
 ```bash
 R = np.eye(3) # rotation matrix 把角点 frame 的旋转都设为identity
 p = np.array(offset) 
-T = pin.SE3(R, p)
+T = pin.SE3(R, p) # 这个坐标系没有旋转，方向和父坐标系完全一致，只是平移到了 p 的位置
 self.frames.append(T)
 ```
 把“角点坐标”包装成 SE(3) 变换（位姿）
 为什么必须用 SE(3)：之后要做 twist/wrench 的坐标变换，Pinocchio 的接口都围绕 SE3 / Motion / Force
 
-4. self.T_oc: 中心位姿 world->Oc
+4. self.T_oc: 中心位姿 world -> Oc
 ```bash
-self.T_oc = pin.SE3.Identity() # 定义并存储中心 frame Oc 在世界系的位姿 T_oc
+world
+ └── Oc   ← 这个就是 self.T_oc
+     ├── O0
+     ├── O1
+     └── ...
+```
+如果 T_oc 初始不是 Identity，一开始就“空中生成一个立方体”。
+
+```bash
+self.T_oc = pin.SE3.Identity() # 定义并存储中心 frame Oc 在世界系的位姿 T_oc 
 self.dt = 0.1
 ```
 角点 O0~O7 都是相对 Oc 固定的；Oc 动，整个 cage 才会动
@@ -56,14 +66,61 @@ rviz 在某个时间点查询 TF tree，如果时间戳不合理，会出现 “
 
 7. Twist：用 6D 速度描述“刚体瞬时运动”（se(3)）
 ```bash
-twist_vec = np.array([0., 0., 0.3, 0.01, 0., 0.]) # twist_vec：定义角速度 ω 和线速度 v
-twist = pin.Motion(twist_vec) # pin.Motion：把它变成 Pinocchio 的 se(3) 元素（有语义的 twist）
+twist_vec = np.array([0., 0., 0.3, 0.01, 0., 0.]) # twist_vec：定义角速度 ω 和线速度 v 它只是“数据”，不是“刚体运动”
+twist = pin.Motion(twist_vec)
 ```
+这一步等价于告诉 Pinocchio：
+- “这是一个 刚体的空间速度（spatial velocity / twist），
+- 属于 Lie algebra se(3)。”
+
+Pinocchio 的约定是：
+- se(3) 的元素 → 用 Motion
+- SE(3) 的元素 → 用 SE3
+
 exp6() 的输入期望是 se(3) 量（Motion），这样 pinocchio 才知道如何做指数映射
 - 顺序必须是 [wx, wy, wz, vx, vy, vz]（Pinocchio 的 Motion 默认这样）
 - ω 和 v 的单位别混：rad/s vs m/s
 
 8. exp6(twist*dt)：把速度积分成“这一小步 SE(3) 位姿增量”（最核心）
+```bash
+twist_vec ∈ ℝ⁶
+   ↓  (语义化)
+ξ ∈ se(3)          ← pin.Motion
+   ↓  (指数映射)
+ΔT ∈ SE(3)         ← pin.exp6
+   ↓  (群乘法)
+T_oc ← T_oc · ΔT   ← 位姿更新
+```
+
+```bash
+速度 (twist)  →  位姿变化 (delta_T) SE(3) 是 twist 的唯一合法积分结果
+se(3)  --exp-->  SE(3)
+Twist = 把角速度和线速度合在一起，描述刚体“此时此刻怎么动” twist = pin.Motion([ωx, ωy, ωz, vx, vy, vz])
+twist 属于 se(3) se(3) 是 SE(3) 的 切空间 表示的是 位姿变化率
+twist -> exp -> Delta SE3 才能更新 SE(3)。T_oc = T_oc * exp(ξ dt)
+```
+- ROS TF：frame = SE(3)
+- Pinocchio：所有 kinematics 用 SE(3)
+- SLAM：pose graph = SE(3)
+- Manipulation：forward kinematics = SE(3)
+- Humanoid / legged：base pose = SE(3)
+
+```bash
+关节速度 qdot
+   ↓  (Jacobian)
+twist ξ ∈ se(3)
+   ↓  (exp)
+位姿增量 ΔT ∈ SE(3)
+   ↓  (群乘)
+新位姿 T
+```
+用 SE(3) 的世界
+- 位姿 = 刚体
+- 运动 = 群乘法
+- 速度 = Lie algebra
+- 积分 = exp 映射
+- TF / 机器人 / 数学 全部统一
+
 ```bash
 delta_T = pin.exp6(twist * self.dt) # 计算在 dt 时间内，从速度得到的位姿变化 ΔT（SE(3)）。
 ```
@@ -73,6 +130,7 @@ delta_T = pin.exp6(twist * self.dt) # 计算在 dt 时间内，从速度得到�
 ```bash
 self.T_oc = self.T_oc * delta_T
 ```
+
 把增量 ΔT 叠加到当前世界位姿 T_oc 上，得到新位姿。
 为什么是右乘：
 代表“在 Oc 自身坐标系下的运动”（body twist integration）
@@ -89,8 +147,8 @@ R = self.T_oc.rotation
 
 11. R → quaternion：TF 只能发四元数
 ```bash
-T_matrix = np.vstack((np.hstack((R, np.zeros((3,1)))), np.array([[0,0,0,1]])))
-q = tf_transformations.quaternion_from_matrix(T_matrix)
+T_matrix = np.vstack((np.hstack((R, np.zeros((3,1)))), np.array([[0,0,0,1]]))) # translation = 0, and last line is 0001 for homogeneous input
+q = tf_transformations.quaternion_from_matrix(T_matrix) # input must be homogeneous matrix
 ```
 做什么：把 3×3 旋转矩阵 R 变成 quaternion (x,y,z,w)。
 为什么要拼 4×4：很多 quaternion 工具函数要求输入 homogeneous matrix。
@@ -103,7 +161,7 @@ q = tf_transformations.quaternion_from_matrix(T_matrix)
 t_center.header.frame_id = 'world'
 t_center.child_frame_id = 'Oc'
 t_center.transform.translation = p
-t_center.transform.rotation = q
+t_center.transform.rotation =  # TF only publish quaternion
 self.br.sendTransform(t_center)
 ```
 做什么：发布中心 frame 的动态位姿。
@@ -111,6 +169,21 @@ self.br.sendTransform(t_center)
 坑：
 frame_id / child_frame_id 拼写错一个字符，TF tree 就断了。
 rviz 的 Fixed Frame 要设成 world（或你实际 root）
+
+```bash
+t_center.transform.rotation.x = q[0]
+t_center.transform.rotation.y = q[1]
+t_center.transform.rotation.z = q[2]
+t_center.transform.rotation.w = q[3]
+```
+
+TF 不是让你“描述一个姿态”，
+而是让系统“长期、反复、稳定地叠加很多姿态”。
+
+Quaternion 是唯一能长期稳定做这件事的表示方式。
+用 quaternion（TF 用的）
+用 4 个数表示方向
+每次转动只是：“方向 × 一个小转动
 
 13. 发布 TF：Oc → O0~O7（静态相对位姿，但你用动态 broadcaster重复发）
 ```bash
