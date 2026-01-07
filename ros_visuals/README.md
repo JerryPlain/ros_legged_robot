@@ -1,6 +1,6 @@
 # Overview of Tutorials
 ## T1
-### SE(3) & TF:
+### se(3), SE(3), twist, exp6, motion, pinocchio:
 用 pinocchio.SE3 表示立方体几何结构，用 twist + exp6 在 SE(3) 上积分中心位姿，并通过 ROS2 tf2 广播完整的 TF 树
 
 1. Node的生命周期：节点入口
@@ -214,3 +214,94 @@ rclpy.spin(node)
 rclpy.shutdown()
 ```
 初始化 ROS → 创建节点 → 进入事件循环 → Ctrl+C 后清理。
+
+### adjoint transformation
+```bash
+def transform_twist(T: pin.SE3, V: pin.Motion) -> pin.Motion:
+    return T.act(V)
+```
+T：从 B → A 的位姿
+V：在 B 中表达的 twist
+返回：在 A 中表达的 twist
+你没有手写 adjoint，而是直接用 Pinocchio 的实现。
+
+对比手写：
+在 O0 定义 twist → 转到 world（重点）
+```bash
+self.frames = []
+for i, offset in enumerate(offsets):
+    R = np.eye(3)
+    p = np.array(offset)
+    T = pin.SE3(R, p)
+    self.frames.append(T)
+‵‵‵
+
+```bash
+T_c_to_O0 = self.frames[0]
+T_w_to_O0 = self.T_oc * T_c_to_O0
+```
+
+### ROS2 + Pinocchio 演示「刚体运动 + 力/力矩（wrench）在不同坐标系之间正确变换」
+一个在世界系中运动的刚体 Oc，带 8 个角点 O0–O7；
+在某个角点施加力/力矩，用两种方式把 wrench 换到另一个角点坐标系，并验证 Pinocchio 的 actInv 和手推伴随矩阵完全一致。
+```bash
+self.T_oc = pin.SE3.Identity() # Oc在world中的SE3 Oc 是刚体中心坐标系
+delta_T = pin.exp6(twist * dt) # Oc 在 world 里做 SE(3) 刚体运动（带角速度 + 线速度）
+self.T_oc = self.T_oc * delta_T
+```
+
+每个角点：
+8 个角点 O0–O7
+```bash
+offsets = [[±L, ±L, ±H]]
+T_c_to_Oi = SE3(I, offset)
+world → Oc → Oi
+```
+TF 在这里的真正作用是什么？
+不是为了“看”，而是为了坐标一致性：
+- world → Oc：在动
+- Oc → Oi：静态
+T_w_to_Oi = T_w_to_Oc * T_c_to_Oi
+
+
+Wrench 是什么？
+```bash
+pin.Force(angular, linear)
+angular：力矩 τ
+linear ：力 f
+```
+这是：
+- se(3)* 的元素
+- 不能像向量一样直接用 R 旋转
+
+在 O0 定义 wrench → 表达成 world
+```bash
+cW = pin.Force([0,0,1], [5,0,0])  # 在 O0 坐标系
+wW = transform_wrensch(T_w_to_O0, cW)
+```
+T_w_to_O0：world → O0
+actInv 的语义是：
+“我有一个在 O0 表达的 wrench，把它换成 world 表达”
+
+反过来：
+```bash
+wW2 = pin.Force(...)     # 在 world
+T_o6_to_w = (T_w_to_O6).inverse()
+c2W = transform_wrench(T_o6_to_w, wW2)
+```
+
+总结：
+```bash
+T_w_o = T_w_c * T_c_o
+v_world = T.act(v_body)
+F_new = T.actInv(F)
+```
+T.act(v)： 把在局部表达的速度，拉回到世界
+T.actInv(F)： 把在局部表达的力，拉回到世界 （功率不变作为约束条件得到的）
+
+**High-level summary**
+
+This tutorial demonstrates a **fully consistent rigid-body modeling and motion framework** based on Lie groups, integrating **Pinocchio** with **ROS 2 TF**. A rigid cube is represented entirely in **SE(3)**, with its motion defined by **twists in se(3)** and integrated via the **exponential map**, guaranteeing physically correct pose updates. A complete TF tree (`world → Oc → Oi`) is continuously broadcast to maintain global frame consistency. Beyond motion, the tutorial shows how **twists and wrenches are correctly transformed between coordinate frames** using adjoint operations, ensuring invariance of physical quantities. Overall, it unifies geometry, motion, force, and visualization under one mathematically sound SE(3) pipeline—the exact abstraction used in modern robotics, SLAM, and manipulation systems.
+
+
+## T2
