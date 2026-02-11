@@ -1,292 +1,245 @@
 import numpy as np
-import numpy.linalg as la
-
-# simulator (#TODO: set your own import path!)
-from simulator.pybullet_wrapper import PybulletWrapper
-from simulator.robot import Robot
-
-# modeling
-import pinocchio as pin
-from pinocchio.robot_wrapper import RobotWrapper
 
 from enum import Enum
 
-# ROS
+from simulator.pybullet_wrapper import PybulletWrapper
+from simulator.robot import Robot
+
+import pinocchio as pin
+from pinocchio.robot_wrapper import RobotWrapper
+
 import rclpy
-from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import PoseStamped
 
 from scipy.interpolate import CubicHermiteSpline
 
-################################################################################
-# utility functions
-################################################################################
 
+# Two-phase control flow in this tutorial:
+# 1) JOINT_SPLINE: move from q_init to q_home with joint-space inverse dynamics.
+# 2) CART_SPLINE: switch to Cartesian control and hold right-hand pose.
 class State(Enum):
-    JOINT_SPLINE = 0,
+    JOINT_SPLINE = 0
     CART_SPLINE = 1
 
-################################################################################
-# Robot
-################################################################################
 
 class Talos(Robot):
-    def __init__(self, simulator, q=None, verbose=True, useFixedBase=True):
-        #TODO: Create RobotWrapper (fixed base), Call base class constructor, make publisher  
-        # set up the urdf_path
+    def __init__(self, simulator, node, q=None, verbose=True, use_fixed_base=True):
         urdf_path = "src/talos_description/robots/talos_reduced.urdf"
-        # set up the pinocchio wrapper
-        wrapper = RobotWrapper.BuildFromURDF(
+
+        # Build a fixed-base Pinocchio model from URDF.
+        self._wrapper = RobotWrapper.BuildFromURDF(
             urdf_path,
-            package_dirs = [],
-            root_joint = None # NO floating base
+            package_dirs=[],
+            root_joint=None,
         )
-       
-        # extract model for PyBullet
-        model = wrapper.model
-        
-        # call Robot
+
         super().__init__(
-            simulator = simulator,
-            filename = urdf_path,
-            model = model,
-            q = q,
-            useFixedBase = useFixedBase,
-            verbose = verbose
+            simulator=simulator,
+            filename=urdf_path,
+            model=self._wrapper.model,
+            q=q,
+            useFixedBase=use_fixed_base,
+            verbose=verbose,
         )
 
-        # save wrapper for controller
-        self._wrapper = wrapper
-        print("[INFO] model.nq =", self._wrapper.model.nq)  # should be 32
-
-        # make publisher for joint states
-        self.node = rclpy.create_node('talos_node') # create a node
+        self.node = node
         self.publisher = self.node.create_publisher(JointState, "/joint_states", 10)
+        # Pinocchio fixed-base: names[0] is "universe", actuated joints start at index 1.
+        self.joint_names = self._wrapper.model.names[1:]
 
-        # save the joint names
-        self.joint_names = model.names[2:]  # jump 'universe' & 'base_link'
-
-    def update(self):
-        # TODO: update base class, update pinocchio robot wrapper's kinematics
-        super().update() # update the state of Pybullet
-        
-        q_current = self.q()
-        v_current = self.v()
-        self._q = q_current        # for publish
-        self._q_dot = v_current
-
-        # update the pinocchio model、
-        pin.forwardKinematics(self._wrapper.model, self._wrapper.data, q_current, v_current)
-        pin.updateFramePlacements(self._wrapper.model, self._wrapper.data)
-   
     def wrapper(self):
         return self._wrapper
 
     def data(self):
         return self._wrapper.data
-    
+
+    def update(self):
+        super().update()
+
+        # Get latest state from simulator in Pinocchio convention.
+        q_current = self.q()
+        v_current = self.v()
+
+        # Keep kinematics data current for controllers.
+        pin.forwardKinematics(self._wrapper.model, self._wrapper.data, q_current, v_current)
+        pin.updateFramePlacements(self._wrapper.model, self._wrapper.data)
+
     def publish(self):
         msg = JointState()
-        msg.name = self.joint_names
-        msg.position = self._q.tolist()
-        msg.velocity = self._q_dot.tolist()
         msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.name = self.joint_names
+        msg.position = self.q().tolist()
+        msg.velocity = self.v().tolist()
         self.publisher.publish(msg)
 
-################################################################################
-# Controllers
-################################################################################
 
 class JointSpaceController:
-    """JointSpaceController
-    Tracking controller in jointspace
-    """
-    def __init__(self, robot, Kp, Kd):        
-        # Save gains, robot ref
+    def __init__(self, robot, kp, kd):
         self.robot = robot
-        self.Kp = Kp
-        self.Kd = Kd
+        self.kp = kp
+        self.kd = kd
 
     def update(self, q_r, q_r_dot, q_r_ddot):
-        # Compute jointspace torque, return torque
+        # q_r, q_r_dot, q_r_ddot are time-varying references from the spline.
+        # The controller is a tracker (not just a fixed-posture regulator).
         q = self.robot.q()
         q_dot = self.robot.v()
 
         model = self.robot.wrapper().model
         data = self.robot.wrapper().data
 
-        M = pin.crba(model, data, q)
-        h = pin.nonLinearEffects(model, data, q, q_dot)
+        # Dynamics terms for feedback linearization:
+        # M(q) from CRBA and h(q, qdot) from nonLinearEffects.
+        m_mat = pin.crba(model, data, q)
+        h_vec = pin.nonLinearEffects(model, data, q, q_dot)
+
         e = q - q_r
-        e_dot = q_dot -q_r_dot
-        tau = M @ (q_r_ddot - self.Kd @ e_dot - self.Kp @ e) + h
+        e_dot = q_dot - q_r_dot
 
+        # Eq.(4): tau = M(q) * (qddot_ref - Kd*edot - Kp*e) + h(q, qdot)
+        tau = m_mat @ (q_r_ddot - self.kd @ e_dot - self.kp @ e) + h_vec
         return tau
-        
+
+
 class CartesianSpaceController:
-    """CartesianSpaceController
-    Tracking controller in cartspace
-    """
-    def __init__(self, robot, joint_name, Kp, Kd):
-        # save gains, robot ref
+    def __init__(self, robot, joint_name, kp, kd, damping=1e-6):
         self.robot = robot
-        self.joint_name = joint_name
-        self.Kp = Kp
-        self.Kd = Kd
+        self.kp = kp
+        self.kd = kd
+        self.damping = damping
 
-        # acquire the joint ID and frame ID for control
-        self.joint_id = self.robot.wrapper().model.getJointId(joint_name)
-        self.frame_id = self.robot.wrapper().model.getFrameId(joint_name) # used for calcualtions
-        
-    def update(self, X_r, X_dot_r, X_ddot_r):
-        # compute cartesian control torque, return torque
+        model = self.robot.wrapper().model
+        # Convert human-readable frame name to fast integer id once.
+        self.frame_id = model.getFrameId(joint_name)
 
-        # Step 1: get current state
+    def update(self, x_r, x_dot_r, x_ddot_r):
         q = self.robot.q()
         v = self.robot.v()
+
         model = self.robot.wrapper().model
         data = self.robot.wrapper().data
 
-        # Step 2: compute Jacobian
         pin.forwardKinematics(model, data, q, v)
-        J = pin.computeFrameJacobian(model, data, q, self.frame_id, pin.LOCAL)
-
-        # Step 3: get current Cartesian pose and velocity
         pin.updateFramePlacement(model, data, self.frame_id)
-        oMf = data.oMf[self.frame_id] # data.oMf is a frame-placement table
-        v_frame = pin.getFrameVelocity(model, data, self.frame_id, pin.LOCAL)
 
-        # Step 4: compute desired Cartesian acceleration using Eq (8)
-        err_pos = pin.log(X_r.inverse() * oMf).vector
-        err_vel = v_frame.vector - X_dot_r
-        X_ddot_d = X_ddot_r - self.Kd @ err_vel - self.Kp @ err_pos
+        # Differential map between joint-space and task-space.
+        j_mat = pin.computeFrameJacobian(model, data, q, self.frame_id, pin.LOCAL)
 
-        # Step 5: compute Jdot * v
+        x_cur = data.oMf[self.frame_id]
+        x_dot_cur = pin.getFrameVelocity(model, data, self.frame_id, pin.LOCAL).vector
+
+        # Pose error in SE(3) tangent space (6D: translation + rotation).
+        x_err = pin.log(x_r.inverse() * x_cur).vector
+        x_dot_err = x_dot_cur - x_dot_r
+        x_ddot_des = x_ddot_r - self.kd @ x_dot_err - self.kp @ x_err
+
+        # From Xddot = J*qddot + Jdot*qdot, this is the Jdot*qdot term.
         a_frame = pin.getFrameClassicalAcceleration(model, data, self.frame_id, pin.LOCAL)
-        Jdot_v = a_frame.vector
+        jdot_v = a_frame.vector
 
-        # Step 6: compute damped pseudo-inverse of Jacobian
-        JJ_T = J @ J.T
-        damping = 1e-6
-        J_sharp = J.T @ np.linalg.inv(JJ_T + damping * np.eye(6))
+        # Damped pseudo-inverse for numerical robustness near singularities.
+        jj_t = j_mat @ j_mat.T
+        j_pinv = j_mat.T @ np.linalg.inv(jj_t + self.damping * np.eye(6))
 
-        # Step 7: compute torque using Eq (7)
-        M = pin.crba(model, data, q)
-        h = pin.nonLinearEffects(model, data, q, v)
-        tau = M @ J_sharp @ (X_ddot_d - Jdot_v) + h
+        m_mat = pin.crba(model, data, q)
+        h_vec = pin.nonLinearEffects(model, data, q, v)
 
+        # Eq.(7) idea:
+        # 1) map desired task acceleration to qddot via J#,
+        # 2) map qddot to torques with inverse dynamics.
+        tau = m_mat @ j_pinv @ (x_ddot_des - jdot_v) + h_vec
         return tau
 
-################################################################################
-# Application
-################################################################################
-    
-class Envionment:
-    def __init__(self):        
-        # state
+
+class Environment:
+    def __init__(self, node):
+        self.node = node
         self.cur_state = State.JOINT_SPLINE
-        
-        # create simulation
+
         self.simulator = PybulletWrapper()
-        
-        ########################################################################
-        # spawn the robot
-        ########################################################################
-        self.q_home = np.zeros(32)
-        self.q_home[14:22] = np.array([0, +0.45, 0, -1, 0, 0, 0, 0 ])
-        self.q_home[22:30] = np.array([0, -0.45, 0, -1, 0, 0, 0, 0 ])
-        
+
+        # 32 DoF fixed-base Talos reduced model.
         self.q_init = np.zeros(32)
+        self.q_home = np.zeros(32)
+        self.q_home[14:22] = np.array([0.0, 0.45, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0])
+        self.q_home[22:30] = np.array([0.0, -0.45, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0])
 
-        # TODO: spawn robot
-        self.robot = Talos(self.simulator, q=self.q_init)
+        self.robot = Talos(self.simulator, node=self.node, q=self.q_init)
 
-        ########################################################################
-        # joint space spline: init -> home
-        ########################################################################
-        # TODO: create a joint spline 
-        q0 = self.q_init
-        q1 = self.q_home
-        v0 = np.zeros(32)
-        v1 = np.zeros(32)
-        self.duration = 5.0  # spline time
-
-        self.q_splines = [CubicHermiteSpline([0, self.duration], [q0[i], q1[i]], [v0[i], v1[i]]) for i in range(32)]       
-        
-        # TODO: create a joint controller
-        self.controller = JointSpaceController(self.robot, Kp=np.diag([100.0] * 32), Kd=np.diag([10.0] * 32))
-
-        ########################################################################
-        # cart space: hand motion
-        ########################################################################
-
-        # TODO: create a cartesian controller
-        self.cartesian_controller = CartesianSpaceController(
-            robot=self.robot,
-            joint_name="arm_right_7_joint",
-            Kp=np.diag([400.0] * 6),
-            Kd=np.diag([40.0] * 6)
+        self.duration = 5.0
+        # One spline per joint. Boundary velocities are zero for smooth start/stop.
+        self.q_splines = [
+            CubicHermiteSpline(
+                [0.0, self.duration],
+                [self.q_init[i], self.q_home[i]],
+                [0.0, 0.0],
             )
+            for i in range(32)
+        ]
+
+        self.joint_controller = JointSpaceController(
+            self.robot,
+            kp=np.diag([100.0] * 32),
+            kd=np.diag([10.0] * 32),
+        )
+
+        self.cartesian_controller = CartesianSpaceController(
+            self.robot,
+            joint_name="arm_right_7_joint",
+            kp=np.diag([400.0] * 6),
+            kd=np.diag([40.0] * 6),
+        )
+
         self.switch_to_cartesian = False
-        self.X_goal = None
-        
-        ########################################################################
-        # logging
-        ########################################################################
-        
-        # TODO: publish robot state every 0.01 s to ROS
+        self.x_goal = None
+
+        # Publish joint states at 100 Hz to ROS.
         self.t_publish = 0.0
         self.publish_period = 0.01
-        
+
     def update(self, t, dt):
-        # TODO: update the robot and model
         self.robot.update()
 
-        # update the controllers
-        # TODO: Do inital jointspace, switch to cartesianspace control
         if self.cur_state == State.JOINT_SPLINE:
+            # Clip time so references stay at final point after duration.
             t_clipped = min(t, self.duration)
             q_r = np.array([spline(t_clipped) for spline in self.q_splines])
             q_r_dot = np.array([spline.derivative(1)(t_clipped) for spline in self.q_splines])
             q_r_ddot = np.array([spline.derivative(2)(t_clipped) for spline in self.q_splines])
-            tau = self.controller.update(q_r, q_r_dot, q_r_ddot)
+
+            tau = self.joint_controller.update(q_r, q_r_dot, q_r_ddot)
 
             if t > self.duration and not self.switch_to_cartesian:
-                print("==> switch to cartesian control")
+                self.node.get_logger().info("Switch to cartesian control")
                 self.switch_to_cartesian = True
                 self.cur_state = State.CART_SPLINE
-                frame_id = self.robot.wrapper().model.getFrameId("arm_right_7_joint")
-                self.X_goal = self.robot.wrapper().data.oMf[frame_id]
 
-        elif self.cur_state == State.CART_SPLINE:
-            X_r = self.X_goal
-            X_dot_r = np.zeros(6)
-            X_ddot_r = np.zeros(6)
-            tau = self.cartesian_controller.update(X_r, X_dot_r, X_ddot_r) 
-        
-        # command the robot
+                # Save current right-hand pose as initial Cartesian goal to avoid jump at switch.
+                frame_id = self.robot.wrapper().model.getFrameId("arm_right_7_joint")
+                self.x_goal = self.robot.wrapper().data.oMf[frame_id].copy()
+
+        else:
+            # Hold the captured Cartesian pose (zero desired velocity/acceleration).
+            x_r = self.x_goal
+            x_dot_r = np.zeros(6)
+            x_ddot_r = np.zeros(6)
+            tau = self.cartesian_controller.update(x_r, x_dot_r, x_ddot_r)
+
+        # Send torque command to actuated joints in simulator.
         self.robot.setActuatedJointTorques(tau)
 
-        # TODO: publish ros stuff
         self.t_publish += dt
         if self.t_publish >= self.publish_period:
             self.robot.publish()
-            self.t_publish = 0.0
-            
-def main():
-    rclpy.init()
-    
-    # create ROS2 node for internal communication
-    node = rclpy.create_node('tutorial_3_robot_sim')
- 
-    # create the environment
-    env = Envionment()
+            self.t_publish -= self.publish_period
 
-    # Instantiate the controller (even though env already creates one)
-    controller = JointSpaceController(env.robot, 
-                                      Kp = np.diag([100.0]*32), 
-                                      Kd = np.diag([10.0]*32))
+
+def main():
+    # Single ROS node shared across app + joint state publishing.
+    rclpy.init()
+    node = rclpy.create_node("tutorial_3_robot_sim")
+
+    env = Environment(node=node)
 
     try:
         while rclpy.ok():
@@ -294,7 +247,6 @@ def main():
             dt = env.simulator.stepTime()
 
             env.update(t, dt)
-
             env.simulator.debug()
             env.simulator.step()
 
@@ -302,10 +254,10 @@ def main():
 
     except KeyboardInterrupt:
         pass
-
     finally:
         node.destroy_node()
         rclpy.shutdown()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
