@@ -1,19 +1,22 @@
-"""This file contains a wrapper for the TSID library to control a humanoid robot.
-"""
+"""TSID wrapper for whole-body control of a humanoid robot.
 
-import os
-import subprocess
-import time
+The wrapper builds a standard TSID formulation with:
+- rigid contacts on both feet
+- CoM and angular momentum regulation
+- joint posture regularization
+- optional SE3 motion tasks for feet, torso, and hands
+"""
 
 import numpy as np
 import pinocchio as pin
 import tsid
 
 ################################################################################
-# utiltity functions
+# Utility helpers
 ################################################################################
 
-def create_sample(pos, vel=None, acc=None): # 
+def create_sample(pos, vel=None, acc=None):
+    """Create a TSID TrajectorySample from an SE3 pose or a vector."""
     if isinstance(pos, pin.SE3):
         sample = tsid.TrajectorySample(12, 6)
         sample.value(pos)
@@ -21,7 +24,7 @@ def create_sample(pos, vel=None, acc=None): #
         sample = tsid.TrajectorySample(pos.shape[0], pos.shape[0])
         sample.value(pos)
     else:
-        raise NotImplemented
+        raise NotImplementedError
     if vel is not None:
         sample.derivative(vel)
     if acc is not None:
@@ -29,18 +32,21 @@ def create_sample(pos, vel=None, acc=None): #
     return sample
 
 def vectorToSE3(vec):
+    """Convert 12D vector [xyz, R_flat] into pin.SE3."""
     return pin.SE3(vec[3:].reshape(3, 3), vec[:3])
 
 def se3ToVector(s3e):
+    """Convert pin.SE3 into 12D vector [xyz, R_flat]."""
     return np.concatenate([s3e.translation, s3e.rotation.reshape(3*3)])
 
 def update_sample(sample, pos, vel=None, acc=None):
+    """Update the value/derivative fields of an existing TrajectorySample."""
     if isinstance(pos, pin.SE3):
         sample.value(pos)
     elif isinstance(pos, np.ndarray):
         sample.value(pos)
     else:
-        raise NotImplemented
+        raise NotImplementedError
     if vel is not None:
         sample.derivative(vel)
     if acc is not None:
@@ -48,7 +54,7 @@ def update_sample(sample, pos, vel=None, acc=None):
     return sample
 
 ################################################################################
-# TSID Wrapper
+# TSID wrapper
 ################################################################################
 
 class TSIDWrapper:
@@ -65,6 +71,15 @@ class TSIDWrapper:
     commands and the accelerations for the robot.
     '''
 
+    # CoM 任务：把质心放在稳定区域，防止重心跑偏导致倒下。
+    # AM 任务：把角动量稳定在零，防止旋转失控导致倒下。
+    # Posture 任务：把关节姿态保持在一个合理范围，防止姿态过于奇怪导致倒下。
+    # Contact 任务：保持脚和地面接触，防止飞起来导致倒下。
+    # Foot motion 任务：保持脚不动，防止滑动导致倒下。
+    # Torso 任务：保持躯干水平，防止前倾后仰导致倒下。
+
+    # 再加上双脚接触约束后，求解器会在“不能破坏接触、满足动力学”的前提下，找到最合适的关节力矩。
+
     def __init__(self, conf):
 
         self.conf = conf
@@ -78,9 +93,6 @@ class TSIDWrapper:
         robot = self.robot
         self.model = robot.model()
 
-        '''
-        Check all links and print them
-        '''
         link_names = [link.name for link in list(self.model.frames)]
         actuated_link_names = [link.name for link in list(
             self.model.frames) if link.type is pin.FrameType.JOINT][1:]
@@ -97,16 +109,11 @@ class TSIDWrapper:
         v = np.zeros(robot.nv)
 
         ########################################################################
-        # formuatlion
+        # formulation
         ########################################################################
 
-        '''
-        Formulation as hirachical Quadratic program. Decision variables are 
-        accelerations (base+joints) and contact forces. Torques are then computed
-        with the equation of motion.
-
-        Set the inital configuration with q and v
-        '''
+        # Formulation is a hierarchical QP where decision variables are
+        # generalized accelerations and contact wrenches.
         formulation = tsid.InverseDynamicsFormulationAccForce(
             "tsid", robot, False)
         formulation.computeProblemData(0.0, q, v)
@@ -126,12 +133,7 @@ class TSIDWrapper:
         # setup the end-effector contacts
         ########################################################################
 
-        '''
-        Surface Contacts are added on both feet.
-        We need to prove the contact shape (footprint), friction coeffs, normal
-        vecotr etc.
-        TSID will then compute contact wrenches
-        '''
+        # Surface contacts on both feet. TSID solves for contact wrenches.
 
         # setup the contact vertices of the feet polygon
         feet_contact_vertices = np.ones((3, 4)) * (-conf.lz)
@@ -140,14 +142,7 @@ class TSIDWrapper:
         feet_contact_vertices[1, :] = [-conf.lfyn,
                                        conf.lfyp, -conf.lfyn, conf.lfyp]
 
-        '''
-        create the right foot contact task
-        
-        creates a 6d contact task (tsid.Contact6d). Constrains motion in any direction
-        with: J*qPP = -JP*qP
-        Set the soleshape of the contact and friction. By defining the four
-        vertices of the contact.
-        '''
+        # Right foot 6D rigid contact task.
         # create the 6d plane to plane contact, set gains Kp and Kd
         contactRF = tsid.Contact6d("contact_rfoot", robot, conf.rf_frame_name, feet_contact_vertices,
                                    conf.contactNormal, conf.f_mu, conf.f_fMin, conf.f_fMax)
@@ -164,9 +159,7 @@ class TSIDWrapper:
         else:
             formulation.addRigidContact(contactRF, conf.w_force_reg)
 
-        '''
-        create the left foot contact task
-        '''
+        # Left foot 6D rigid contact task.
         contactLF = tsid.Contact6d("contact_lfoot", robot, conf.lf_frame_name, feet_contact_vertices,
                                    conf.contactNormal, conf.f_mu, conf.f_fMin, conf.f_fMax)
         contactLF.setKp(conf.kp_contact * np.ones(6))
@@ -183,13 +176,10 @@ class TSIDWrapper:
             formulation.addRigidContact(contactLF, conf.w_force_reg)
 
         ########################################################################
-        # com poition and momentum tasks
+        # CoM and momentum tasks
         ########################################################################
 
-        '''
-        Center of mass taks.
-        Can control the center of mass (COM) position
-        '''
+        # CoM tracking task.
         comTask = tsid.TaskComEquality("task-com", robot)
         comTask.setKp(conf.kp_com * np.ones(3))
         comTask.setKd(2.0 * np.sqrt(conf.kp_com) * np.ones(3))
@@ -199,10 +189,7 @@ class TSIDWrapper:
         com_ref = create_sample(robot.com(data))
         comTask.setReference(com_ref)
 
-        '''
-        Angular momentum task.
-        Adds further stability by regulating angular momentum (AM) to zero 
-        '''
+        # Angular momentum regulation (stabilization).
         amTask = tsid.TaskAMEquality("task-am", robot)
         amTask.setKp(conf.kp_am * np.array([1., 1., 10.]))
         amTask.setKd(2.0 * np.sqrt(conf.kp_am * np.array([1., 1., 10.])))
@@ -216,10 +203,7 @@ class TSIDWrapper:
         # posture task
         ########################################################################
 
-        '''
-        Add a posture task.
-        Will make the solution of the QP unique and acts as regualization
-        '''
+        # Posture regularization task (also helps keep QP solution unique).
         postureTask = tsid.TaskJointPosture("task-posture", robot)
         postureTask.setKp(conf.kp_posture)
         postureTask.setKd(2.0 * np.sqrt(conf.kp_posture))
@@ -233,12 +217,10 @@ class TSIDWrapper:
         postureTask.setReference(posture_ref)
 
         ########################################################################
-        # posture task
+        # End-effector motion tasks
         ########################################################################
 
-        '''
-        SE3 task for left position
-        '''
+        # Left foot SE3 motion task.
         self.leftFootTask = tsid.TaskSE3Equality(
             "task-left-foot", self.robot, self.conf.lf_frame_name)
         self.leftFootTask.setKp(
@@ -253,9 +235,7 @@ class TSIDWrapper:
         self.lf_ref = create_sample(T_lf_w)
         self.leftFootTask.setReference(self.lf_ref)
 
-        '''
-        SE3 task for right foot position
-        '''
+        # Right foot SE3 motion task.
         self.rightFootTask = tsid.TaskSE3Equality(
             "task-right-foot", self.robot, self.conf.rf_frame_name)
         self.rightFootTask.setKp(
@@ -270,43 +250,22 @@ class TSIDWrapper:
         self.rf_ref = create_sample(T_rf_w)
         self.rightFootTask.setReference(self.rf_ref)
         
-        '''
-        SE3 task for left hand pose
-        '''
-        # TODO: ADD a tsid.TaskSE3Equality for the left hand
-        # self.LH = # the frame id
-        # self.leftHandTask = # the motion task
-        # self.lh_ref = # the TrajectorySample (see: create_sample(...))
+        # Left hand SE3 motion task (created but not activated by default).
         self.LH = self.model.getFrameId(conf.lh_frame_name) # the frame id
         self.leftHandTask = tsid.TaskSE3Equality(
             "task-left-hand", self.robot, self.conf.lh_frame_name) # the motion task
         
-        # set gains for the left hand task
-        # Kp and Kd are set to the same values as the right hand task
-        # only the first three dofs are controlled (position), the last three (orientation) are not
+        # Control position only (xyz); orientation gains are set to zero.
         self.leftHandTask.setKp(
             self.conf.kp_hand * np.array([1, 1, 1, 0, 0, 0]))
         self.leftHandTask.setKd(
             2.0 * np.sqrt(self.conf.kp_hand) * np.array([1, 1, 1, 0, 0, 0]))
         
         H_lh_ref = self.robot.framePosition(data, self.LH) # the reference pose
-        # create a TrajectorySample for the left hand reference pose
-        # this will be used to set the reference of the left hand task
-        # the TrajectorySample contains the position, velocity and acceleration
-        
         self.lh_ref = create_sample(H_lh_ref) # the TrajectorySample
-        # 我想让这个 task（比如左手）追踪这个 TrajectorySample
-        # 这一步并不会生效，除非这个任务被加进了控制器（即：调用了 formulation.addMotionTask(...)）
         self.leftHandTask.setReference(self.lh_ref) 
 
-        '''
-        SE3 task for right hand pose
-        '''
-        # TODO: ADD a tsid.TaskSE3Equality for the right hand
-        # self.RH = # the frame id
-        # self.rightHandTask = # the motion task
-        # self.rh_ref = # the TrajectorySample (see: create_sample(...))
-
+        # Right hand SE3 motion task (created but not activated by default).
         self.RH = self.model.getFrameId(conf.rh_frame_name)
         
         self.rightHandTask = tsid.TaskSE3Equality(
@@ -319,12 +278,6 @@ class TSIDWrapper:
         
         H_rh_ref = self.robot.framePosition(data, self.RH)
         self.rh_ref = create_sample(H_rh_ref) # the TrajectorySample
-        # self.rightHandTask.setReference(self.rh_ref) 
-        
-        # # 暂时注释掉，等到需要右手任务时再启用
-        # 是注释掉了的，也就是说“我现在不想给它设置参考”
-        # 我们将在运行时（8秒后）再动态更新参考轨迹；
-        # setReference(...) 只能给出一个固定的目标，但你要右手画圆，是动态目标，所以那时会用到tsid_wrapper.set_RH_pos_ref(p)
 
         ########################################################################
         # torso task
@@ -345,6 +298,7 @@ class TSIDWrapper:
         H_torso_ref = robot.framePosition(data, torso_id)
         self.torso_ref = create_sample(H_torso_ref)
         self.torsoTask.setReference(self.torso_ref)
+        self.torso_id = torso_id
         
         assert self.model.existFrame(conf.base_frame_name)
         self.base_id = self.model.getFrameId(conf.base_frame_name)
@@ -420,12 +374,18 @@ class TSIDWrapper:
         self.sol = None
         self.tau = np.zeros(self.robot.na)
         self.acc = np.zeros(self.robot.nv)
+        self.tau_sol = np.zeros(self.robot.na)
+        self.dv_sol = np.zeros(self.robot.nv)
 
     ############################################################################
     # functions
     ############################################################################
 
     def update(self, q, v, t, do_sove=True):
+        """Update QP with current state and return torque/acceleration solution.
+
+        Note: parameter name `do_sove` is kept for backward compatibility.
+        """
         hqp_data = self.formulation.computeProblemData(t, q, v)
         
         if do_sove:
@@ -499,7 +459,8 @@ class TSIDWrapper:
         T_frame_w = self.robot.framePosition(data, self.base_id)
         v_frame_w = self.robot.frameVelocity(data, self.base_id)
         if dv is not None:
-            a_frame_w = self.torso_task.getAcceleration(dv)
+            # No dedicated base motion task acceleration is defined in this wrapper.
+            a_frame_w = np.zeros(6)
             return T_frame_w, v_frame_w, a_frame_w
         return T_frame_w, v_frame_w
 
@@ -509,7 +470,7 @@ class TSIDWrapper:
 
     def setPostureRef(self, q):
         update_sample(self.posture_ref, q)
-        self.posture_task.setReference(self.posture_ref)
+        self.postureTask.setReference(self.posture_ref)
 
     ############################################################################
     # set endeffector motion references
@@ -744,15 +705,15 @@ class TSIDWrapper:
         return self.contactLF.getNormalForce(self.get_LF_wrench(sol))
 
     def get_RH_normal_force(self, sol):
-        if self.formulation.checkContact(self.contactRH.name, sol):
+        """Return right-hand normal force if a hand contact exists, else zero."""
+        if hasattr(self, "contactRH") and self.formulation.checkContact(self.contactRH.name, sol):
             f = self.formulation.getContactForce(self.contactRH.name, sol)
             return self.contactRH.getNormalForce(f)
-        else:
-            return 0.0
+        return 0.0
 
     def get_LH_normal_force(self, sol):
-        if self.formulation.checkContact(self.contactLH.name, sol):
+        """Return left-hand normal force if a hand contact exists, else zero."""
+        if hasattr(self, "contactLH") and self.formulation.checkContact(self.contactLH.name, sol):
             f = self.formulation.getContactForce(self.contactLH.name, sol)
             return self.contactLH.getNormalForce(f)
-        else:
-            return 0.0
+        return 0.0
