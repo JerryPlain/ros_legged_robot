@@ -1,203 +1,178 @@
-# Guidelines
+# legged_ros: A ROS2 Humanoid Locomotion and Control Playground
 
-## Delivery 1
+A research-oriented ROS2 workspace for humanoid robotics, focused on **Talos simulation**, **whole-body control**, and **walking generation**.
+The repository integrates rigid-body geometry, dynamics, optimization, and visualization workflows using:
 
-### T1
+- **ROS2** (`rclpy`, TF, RViz)
+- **PyBullet** (physics simulation)
+- **Pinocchio** (kinematics/dynamics)
+- **TSID** (task-space inverse dynamics)
+- **Drake/Pydrake** (OCP/MPC exercises)
+
+## Highlights
+
+- End-to-end progression from SE(3) fundamentals to dynamic walking.
+- Clear tutorial-style task split: **T1 → T7**.
+- Practical balance experiments with **ZMP/CMP/DCM** and disturbance rejection.
+- Reusable simulation bridge between PyBullet and Pinocchio.
+- ROS-native visualization pipeline (`joint_states`, TF, RViz).
+
+## Repository Structure
+
+```text
+.
+├── ros_legged_robot/
+│   ├── bullet_sims/         # Tutorial 2/3 simulation and control scripts
+│   ├── ros_visuals/         # Tutorial 1/4/5/6/7 scripts and RViz configs
+│   ├── simulator/           # PyBullet-Pinocchio wrapper utilities
+│   ├── talos_description/   # Talos URDF and meshes
+│   └── reemc_description/   # Additional robot description assets
+├── 项目总结_中文.md          # Chinese project summary
+└── DIVERSITY_METRICS_README.md  # Additional technical notes
+```
+
+## Core Modules
+
+### `simulator`
+Provides reusable wrappers:
+
+- `PybulletWrapper`: simulation stepping, debug drawing, utility methods
+- `Body`: PyBullet body abstraction
+- `Robot`: state/control bridge between PyBullet and Pinocchio spaces
+
+### `bullet_sims`
+Main executables:
+
+- `t2_temp`: model loading + `M(q)` and `b(q, v)` inspection
+- `t21`: joint-space PD with nonlinear compensation
+- `t22`: interpolation tracking to home posture
+- `t23`: ROS2 `joint_states` publishing for RViz
+- `t3_main`: two-phase control (joint-space → Cartesian-space)
+
+### `ros_visuals`
+Main executables:
+
+- `t11`, `t12`, `t13`: SE(3), twist, wrench transformations + TF publishing
+- `t4_standing`, `one_leg_stand`, `squating`: TSID standing and balance tasks
+- `t51`, `t52`: ZMP/CMP/DCM estimation + ankle/hip balance strategies under pushes
+- `walking`: integrated footstep planning + LIPMPC + swing-foot trajectory
+
+## Prerequisites
+
+Recommended environment:
+
+- Ubuntu + ROS2 (Humble/Foxy-compatible Python workflows)
+- Python 3.10+
+- `colcon`
+- `pybullet`, `pinocchio`, `tsid`, `numpy`, `scipy`, `matplotlib`
+- Optional for T6/T7 optimization exercises: `pydrake`
+
+> Note: exact package versions are not pinned in this repository.
+
+## Quick Start
+
+### 1. Build workspace
+
 ```bash
+cd ros_legged_robot
 colcon build --symlink-install
 source install/setup.bash
+```
+
+### 2. Run selected tasks
+
+### Tutorial 1 (SE(3), Twist, Wrench)
+
+```bash
 ros2 launch ros_visuals launch_t11.py
-```
-
-```bash
-colcon build --symlink-install
-source install/setup.bash
 ros2 launch ros_visuals launch_t12.py
-```
-
-```bash
-colcon build --symlink-install
-source install/setup.bash
 ros2 launch ros_visuals launch_t13.py
 ```
 
-### T2
+### Tutorial 2 (Dynamics and Joint Control)
+
 ```bash
-colcon build
-source install/setup.bash
 ros2 run bullet_sims t2_temp
-```
-
-```bash
-colcon build
-source install/setup.bash
 ros2 run bullet_sims t21
-```
-
-```bash
-colcon build
-source install/setup.bash
 ros2 run bullet_sims t22
-```
-
-```bash
-colcon build
-source install/setup.bash
 ros2 run bullet_sims t23
-```
-
-```bash
-colcon build
-source install/setup.bash
 ros2 launch ros_visuals talos_rviz.launch.py
 ```
 
-### T3
+### Tutorial 3 (Two-Phase Control)
+
 ```bash
-colcon build --packages-select bullet_sims
-source install/setup.bash
 ros2 run bullet_sims t3_main
 ```
 
+Optional marker tools:
+
 ```bash
-colcon build
-source install/setup.bash
 ros2 run ros_visuals teleop_marker
-```
-
-"solely for the visualization of 6-DOF cubic" (Because I cannot find a way to build the connection between t3_main.py & teleoperation.py):
-
-```bash
-colcon build
-source install/setup.bash
 ros2 run ros_visuals interactive
-```
-
-Open another Terminal:
-```bash
 rviz2
 ```
 
-## Delivery 2
+### Tutorial 4 (TSID Standing / One-Leg / Squat)
 
-### T4
-
-EX1：
 ```bash
-colcon build
-source install/setup.bash
 ros2 run ros_visuals t4_standing
-```
-
-EX2：
-```bash
-colcon build
-source install/setup.bash
 ros2 run ros_visuals one_leg_stand
-```
-
-EX3 and EX4: the simulation time is about 15s, after that you can (or you already can) find the graph （T4_com_comparison_plot.png） in /workspaces/ros_ws/src/
-
-```bash
-ros_visuals/ros_visuals/images
-colcon build
-source install/setup.bash
 ros2 run ros_visuals squating
 ```
 
-### T5
+### Tutorial 5 (Balance Metrics and Push Recovery)
 
-EX1 and EX2:
 ```bash
-colcon build
-source install/setup.bash
 ros2 run ros_visuals t51
-```
-
-EX3: Before beginning, please Change the f_push_mag in line 220 of t51.py from 10N to 18N for better understanding
-```bash
-colcon build
-source install/setup.bash
-ros2 run ros_visuals t51
-```
-
-you can do the following change in t51 for 4 different situations of balance control:
-```bash
-    while rclpy.ok(): # Main loop
-        ############################
-        # Detmine control strategies
-        ############################
-        use_ankle_strategy = False  # YOU CAN CHANGE IT TO "True" HERE
-        use_hip_strategy = False
-```
-
-1. when the ankle_strategy and hip_strategy are False, the robot will fall
-2. when only ankle_strategy is true, it will stand but hard
-3. when only hip_strategy is true, it will stand but still hard
-4. when we use both strategy, it will stand easier.
-
-see the graphs in src/ros_visuals/ros_visuals/images
-
-EX4：I have changed the F_push_mag to 40N
-```bash
-colcon build
-source install/setup.bash
 ros2 run ros_visuals t52
 ```
 
-```bash
-    while rclpy.ok(): # Main loop
-        ############################
-        # Detmine control strategies
-        ############################
-        use_ankle_strategy = False  # YOU CAN CHANGE IT TO "True" HERE
-        use_hip_strategy = False
-```
+Control strategy toggles are exposed in `t51.py` and `t52.py`:
 
-see the graphs in src/ros_visuals/ros_visuals/images
+- `use_ankle_strategy`
+- `use_hip_strategy`
 
+This enables controlled comparisons:
 
-## Delivery 3
+- no strategy
+- ankle only
+- hip only
+- ankle + hip
 
-### T6
-EX1：
-```bash
-source ~/drake_env/bin/activate 
-python3 src/ros_visuals/ros_visuals/example_2_pydrake.py
-```
+### Tutorial 6 (OCP/MPC Foundations)
 
-EX2：
 ```bash
 source ~/drake_env/bin/activate
-python3 src/ros_visuals/ros_visuals/ocp_lipm_2ord.py
+python3 ros_visuals/ros_visuals/example_2_pydrake.py
+python3 ros_visuals/ros_visuals/ocp_lipm_2ord.py
+python3 ros_visuals/ros_visuals/mpc_lipm_2ord.py
 ```
 
-EX3：
+### Tutorial 7 (Walking Pipeline)
+
 ```bash
-source ~/drake_env/bin/activate
-python3 src/ros_visuals/ros_visuals/mpc_lipm_2ord.py
+python3 ros_visuals/ros_visuals/foot_trajectory.py
+python3 ros_visuals/ros_visuals/footstep_planner.py
+python3 ros_visuals/ros_visuals/walking.py
 ```
 
-### T7
+## Outputs and Artifacts
 
-EX1.1: Foot Trajectory
+Generated plots are saved in:
+
+- `ros_legged_robot/ros_visuals/ros_visuals/images/`
+
+Notable artifacts include balance comparison plots for T4/T5 (e.g. `T4_com_comparison_plot.png`, `t51_plot_*.png`, `t52_plot_*.png`).
+
+## Reproducibility Notes
+
+- Build with `--symlink-install` to iterate quickly on Python sources.
+- Re-source the workspace after each build:
+
 ```bash
-colcon build
-source install/setup.bash
-python3 src/ros_visuals/ros_visuals/foot_trajectory.py
+source ros_legged_robot/install/setup.bash
 ```
 
-EX1.2: Footstep Planner
-```bash
-colcon build
-source install/setup.bash
-python3 src/ros_visuals/ros_visuals/footstep_planner.py
-```
-
-EX1.3 & EX1.4: Walking Check
-```bash
-source ~/drake_env/bin/activate
-colcon build
-source install/setup.bash
-python3 src/ros_visuals/ros_visuals/walking.py
-```
+- Some launch files assume ROS workspace-style paths.
+- For push-recovery experiments, run each strategy setting separately and compare generated plots.
