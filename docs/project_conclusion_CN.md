@@ -75,7 +75,7 @@
 
 ### 3.3 结果资产沉淀
 - 生成并保存了 T4/T5 多组对比图（`ros_visuals/ros_visuals/images/`）。
-- 提交了阶段答题材料（`Answers for First submission.txt`、`Answers for Second submission.txt`）。
+- 提交了阶段答题材料（`submission_01_tutorials_1_2.md`、`submission_02_tutorial_5.md`）。
 
 ## 4. 当前仓库结构结论
 - ROS工作主体在 `ros_legged_robot/`，包含 5 个 ROS 包：

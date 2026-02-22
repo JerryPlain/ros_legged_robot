@@ -1,77 +1,71 @@
-# legged_ros: A ROS2 Humanoid Locomotion and Control Playground
+# Simulation-based Modeling and Control of Humanoid Robot
 
-A research-oriented ROS2 workspace for humanoid robotics, focused on **Talos simulation**, **whole-body control**, and **walking generation**.
-The repository integrates rigid-body geometry, dynamics, optimization, and visualization workflows using:
-
-- **ROS2** (`rclpy`, TF, RViz)
-- **PyBullet** (physics simulation)
-- **Pinocchio** (kinematics/dynamics)
-- **TSID** (task-space inverse dynamics)
-- **Drake/Pydrake** (OCP/MPC exercises)
+A research-driven ROS2 workspace for building and evaluating humanoid locomotion pipelines on Talos, from rigid-body geometry to full walking simulation.
 
 ## Highlights
 
-- End-to-end progression from SE(3) fundamentals to dynamic walking.
-- Clear tutorial-style task split: **T1 → T7**.
-- Practical balance experiments with **ZMP/CMP/DCM** and disturbance rejection.
-- Reusable simulation bridge between PyBullet and Pinocchio.
-- ROS-native visualization pipeline (`joint_states`, TF, RViz).
+- End-to-end tutorial chain: **T1 -> T7**
+- Tight integration of **ROS2 + PyBullet + Pinocchio + TSID + Drake/Pydrake**
+- Reusable simulation bridge between physics (`PyBullet`) and model-based control (`Pinocchio`/`TSID`)
+- Balance analysis with **ZMP/CMP/DCM** and disturbance-recovery strategy comparisons
+- Reproducible scripts for standing, one-leg support, squat, push recovery, MPC, and walking
 
-## Repository Structure
+## System Stack
+
+| Layer | Main Tools |
+|---|---|
+| Robotics middleware | ROS2 (`rclpy`, TF, RViz) |
+| Physics | PyBullet |
+| Kinematics/Dynamics | Pinocchio |
+| Whole-body control | TSID |
+| OCP/MPC learning tasks | Drake / Pydrake |
+
+## Repository Layout
 
 ```text
-.
-├── ros_legged_robot/
-│   ├── bullet_sims/         # Tutorial 2/3 simulation and control scripts
-│   ├── ros_visuals/         # Tutorial 1/4/5/6/7 scripts and RViz configs
-│   ├── simulator/           # PyBullet-Pinocchio wrapper utilities
-│   ├── talos_description/   # Talos URDF and meshes
-│   └── reemc_description/   # Additional robot description assets
-├── 项目总结_中文.md          # Chinese project summary
-└── DIVERSITY_METRICS_README.md  # Additional technical notes
+ros_legged_robot/
+├── bullet_sims/         # T2/T3: dynamics and control executables
+├── ros_visuals/         # T1/T4/T5/T6/T7: visualization and algorithm scripts
+├── simulator/           # Shared simulation wrappers
+├── talos_description/   # Talos URDF + meshes
+├── reemc_description/   # Additional robot description assets
+├── QA/                  # Structured answer documents for submissions
+└── docs/                # Project conclusions and supporting notes
 ```
 
-## Core Modules
+## Package Map
 
-### `simulator`
-Provides reusable wrappers:
+| Package | Role | Entrypoints |
+|---|---|---|
+| `bullet_sims` | Dynamics and low-level control exercises | `t2_temp`, `t21`, `t22`, `t23`, `t3_main` |
+| `ros_visuals` | TF demos, TSID tasks, balance experiments, walking pipeline | `t11`, `t12`, `t13`, `t4_standing`, `one_leg_stand`, `squating`, `t51`, `t52`, `teleop_marker`, `interactive` |
+| `simulator` | Utilities for simulation stepping, robot abstraction, and state/control bridging | Library package (no CLI entrypoint) |
 
-- `PybulletWrapper`: simulation stepping, debug drawing, utility methods
-- `Body`: PyBullet body abstraction
-- `Robot`: state/control bridge between PyBullet and Pinocchio spaces
+## Tutorial Roadmap (T1-T7)
 
-### `bullet_sims`
-Main executables:
+| Tutorial | Focus | Key Scripts |
+|---|---|---|
+| T1 | SE(3), twist, wrench transforms + TF broadcasting | `t11.py`, `t12.py`, `t13.py` |
+| T2 | Floating-base dynamics and joint-space control | `t2_temp.py`, `t21.py`, `t22.py`, `t23.py` |
+| T3 | Two-stage control (joint-space -> Cartesian-space) | `t3_main.py` |
+| T4 | TSID standing / one-leg support / squat | `t4_standing.py`, `one_leg_stand.py`, `squating.py` |
+| T5 | ZMP/CMP/DCM and push-recovery strategy comparison | `t51.py`, `t52.py` |
+| T6 | OCP/MPC foundations | `example_2_pydrake.py`, `ocp_lipm_2ord.py`, `mpc_lipm_2ord.py` |
+| T7 | Footstep planning + swing-foot trajectory + walking integration | `footstep_planner.py`, `foot_trajectory.py`, `lip_mpc.py`, `walking.py` |
 
-- `t2_temp`: model loading + `M(q)` and `b(q, v)` inspection
-- `t21`: joint-space PD with nonlinear compensation
-- `t22`: interpolation tracking to home posture
-- `t23`: ROS2 `joint_states` publishing for RViz
-- `t3_main`: two-phase control (joint-space → Cartesian-space)
+## Environment
 
-### `ros_visuals`
-Main executables:
-
-- `t11`, `t12`, `t13`: SE(3), twist, wrench transformations + TF publishing
-- `t4_standing`, `one_leg_stand`, `squating`: TSID standing and balance tasks
-- `t51`, `t52`: ZMP/CMP/DCM estimation + ankle/hip balance strategies under pushes
-- `walking`: integrated footstep planning + LIPMPC + swing-foot trajectory
-
-## Prerequisites
-
-Recommended environment:
-
-- Ubuntu + ROS2 (Humble/Foxy-compatible Python workflows)
+- Ubuntu + ROS2
 - Python 3.10+
 - `colcon`
-- `pybullet`, `pinocchio`, `tsid`, `numpy`, `scipy`, `matplotlib`
-- Optional for T6/T7 optimization exercises: `pydrake`
+- Python deps: `pybullet`, `pinocchio`, `tsid`, `numpy`, `scipy`, `matplotlib`
+- Optional (T6/T7): `pydrake`
 
-> Note: exact package versions are not pinned in this repository.
+> Dependency versions are currently not pinned. For reproducibility, use a local lockfile or environment export.
 
 ## Quick Start
 
-### 1. Build workspace
+### 1. Build Workspace
 
 ```bash
 cd ros_legged_robot
@@ -79,33 +73,46 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 2. Run selected tasks
-
-### Tutorial 1 (SE(3), Twist, Wrench)
+### 2. Run Experiments
 
 ```bash
+# T1
 ros2 launch ros_visuals launch_t11.py
 ros2 launch ros_visuals launch_t12.py
 ros2 launch ros_visuals launch_t13.py
-```
 
-### Tutorial 2 (Dynamics and Joint Control)
-
-```bash
+# T2
 ros2 run bullet_sims t2_temp
 ros2 run bullet_sims t21
 ros2 run bullet_sims t22
 ros2 run bullet_sims t23
 ros2 launch ros_visuals talos_rviz.launch.py
-```
 
-### Tutorial 3 (Two-Phase Control)
-
-```bash
+# T3
 ros2 run bullet_sims t3_main
+
+# T4
+ros2 run ros_visuals t4_standing
+ros2 run ros_visuals one_leg_stand
+ros2 run ros_visuals squating
+
+# T5
+ros2 run ros_visuals t51
+ros2 run ros_visuals t52
+
+# T6
+source ~/drake_env/bin/activate
+python3 ros_visuals/ros_visuals/example_2_pydrake.py
+python3 ros_visuals/ros_visuals/ocp_lipm_2ord.py
+python3 ros_visuals/ros_visuals/mpc_lipm_2ord.py
+
+# T7
+python3 ros_visuals/ros_visuals/foot_trajectory.py
+python3 ros_visuals/ros_visuals/footstep_planner.py
+python3 ros_visuals/ros_visuals/walking.py
 ```
 
-Optional marker tools:
+Optional interaction tools:
 
 ```bash
 ros2 run ros_visuals teleop_marker
@@ -113,66 +120,45 @@ ros2 run ros_visuals interactive
 rviz2
 ```
 
-### Tutorial 4 (TSID Standing / One-Leg / Squat)
+## Balance Strategy Switches (T5)
 
-```bash
-ros2 run ros_visuals t4_standing
-ros2 run ros_visuals one_leg_stand
-ros2 run ros_visuals squating
-```
-
-### Tutorial 5 (Balance Metrics and Push Recovery)
-
-```bash
-ros2 run ros_visuals t51
-ros2 run ros_visuals t52
-```
-
-Control strategy toggles are exposed in `t51.py` and `t52.py`:
+In `t51.py` and `t52.py`:
 
 - `use_ankle_strategy`
 - `use_hip_strategy`
 
-This enables controlled comparisons:
+Suggested comparison modes:
 
 - no strategy
 - ankle only
 - hip only
 - ankle + hip
 
-### Tutorial 6 (OCP/MPC Foundations)
+## Outputs
 
-```bash
-source ~/drake_env/bin/activate
-python3 ros_visuals/ros_visuals/example_2_pydrake.py
-python3 ros_visuals/ros_visuals/ocp_lipm_2ord.py
-python3 ros_visuals/ros_visuals/mpc_lipm_2ord.py
-```
-
-### Tutorial 7 (Walking Pipeline)
-
-```bash
-python3 ros_visuals/ros_visuals/foot_trajectory.py
-python3 ros_visuals/ros_visuals/footstep_planner.py
-python3 ros_visuals/ros_visuals/walking.py
-```
-
-## Outputs and Artifacts
-
-Generated plots are saved in:
+Generated figures are saved in:
 
 - `ros_legged_robot/ros_visuals/ros_visuals/images/`
 
-Notable artifacts include balance comparison plots for T4/T5 (e.g. `T4_com_comparison_plot.png`, `t51_plot_*.png`, `t52_plot_*.png`).
+Typical artifacts:
+
+- `T4_com_comparison_plot.png`
+- `t51_plot_*.png`
+- `t52_plot_*.png`
+
+## QA Documents
+
+- `ros_legged_robot/QA/submission_01_tutorials_1_2.md`
+- `ros_legged_robot/QA/submission_02_tutorial_5.md`
 
 ## Reproducibility Notes
 
-- Build with `--symlink-install` to iterate quickly on Python sources.
-- Re-source the workspace after each build:
+- Use `--symlink-install` for fast iteration on Python packages
+- Re-source setup after each rebuild:
 
 ```bash
 source ros_legged_robot/install/setup.bash
 ```
 
-- Some launch files assume ROS workspace-style paths.
-- For push-recovery experiments, run each strategy setting separately and compare generated plots.
+- Some launch scripts assume standard ROS workspace layout
+- Run push-recovery strategies separately, then compare saved plots
